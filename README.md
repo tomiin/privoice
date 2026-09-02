@@ -161,24 +161,83 @@ the tamper-evidence check independently verifiable.
 
 ## Running it
 
-Requires a Preview wallet holding NIGHT with **DUST registered** (holding NIGHT
-is not enough — it must be registered to generate DUST), and a local proof
-server on `:6300`.
+### What you need
+
+- **Node 22+** and the Compact compiler (`compact` on your PATH).
+- A **Midnight Preview wallet** holding NIGHT, with that NIGHT **registered for
+  DUST**. Holding NIGHT is not enough — it must be registered before any DUST
+  accrues, and DUST is what pays fees.
+- A **local proof server** on `:6300`. Proving happens on your machine, so
+  nothing deploys without it:
+
+  ```bash
+  docker run -d --name midnight-proof-server -p 6300:6300 \
+    midnightntwrk/proof-server:8.1.0 -- midnight-proof-server -v
+  ```
+
+- **USDM on Preview** for the payment step. Without it the contract lifecycle
+  still runs end to end and the script says clearly that the payment leg was
+  skipped.
+
+### Point it at your wallet
+
+The runner never reads a key from a file inside this repo. Supply one of these,
+in this order of precedence:
+
+| variable | value |
+| --- | --- |
+| `PRIVOICE_SEED_HEX` | a raw seed as hex |
+| `PRIVOICE_MNEMONIC` | a BIP-39 mnemonic for your Preview wallet |
+
+```bash
+export PRIVOICE_MNEMONIC="word word word ..."
+```
+
+If neither is set, the runner falls back to reading `MIDNIGHT_MNEMONIC_PREVIEW`
+from a local `.env` belonging to a different project of mine. That path will not
+exist on your machine, and the error message tells you so — set one of the two
+variables above instead.
+
+### Run it
 
 ```bash
 compact compile +0.31.1 contract/src/privoice.compact app/managed
 cd app
 npm install
+npm run balances
 npm run deploy
 ```
 
-The run deploys a fresh contract and drives the whole lifecycle: issue as the
-issuer, acknowledge as the payer, settle as the issuer. Issuer and payer have
-separate secret keys and separate private states, swapped between calls through
-the private state provider rather than by sharing a key.
+`npm run balances` prints every unshielded token this wallet holds, flags
+whether USDM is present, and shows the Bech32m address to send USDM to.
 
-Both identities run in one process here, which a real deployment would not do.
-The demo harness is what is collapsed — not the security model.
+`npm run deploy` deploys a fresh contract and drives the whole lifecycle:
+
+1. **issue** as the issuer — publishes only a commitment
+2. **acknowledge** as the payer — proves the invoice names them
+3. **pay** — a real USDM transfer, wallet to wallet
+4. **settle** as the issuer — records that payment arrived
+
+Useful switches:
+
+| variable | effect |
+| --- | --- |
+| `PRIVOICE_PAYEE` | Bech32m address to pay; defaults to a self-transfer |
+| `PRIVOICE_AMOUNT` | invoice amount in base units (default `125000` = 0.125 USDM) |
+| `FRESH_SYNC=1` | ignore the wallet checkpoint and cold-sync from scratch |
+| `CHECKPOINT_MAX_HOURS` | how stale a checkpoint may be before it is refused (default 12) |
+
+The first run cold-syncs the DUST wallet, which walks ~180,000 generation
+events and takes several minutes. After that a checkpoint is saved and later
+runs resume in seconds. A **stale** checkpoint is worse than none — it corrupts
+the dust tree — which is why old ones are refused rather than used.
+
+### A note on the two identities
+
+Issuer and payer have separate secret keys and separate private states, swapped
+between calls through the private state provider rather than by sharing a key.
+Both run in one process here, which a real deployment would not do. The demo
+harness is what is collapsed — not the security model.
 
 ## Known gaps
 
