@@ -1,0 +1,39 @@
+// Derived from Midnight servicedesk #117's repro (see unshielded.compact,
+// which is kept byte-for-byte and is NOT this file).
+//
+// The purpose here is to isolate ONE variable. Both circuits below are
+// proving contract calls that write the ledger. They are identical except
+// that `deposit` additionally performs an unshielded-token effect.
+//
+// Putting both in a SINGLE contract is deliberate: one deploy, one wallet,
+// one DUST state, one block window. Anything that differs between the two
+// results is the unshielded effect and nothing else.
+//
+//   bump    lands, deposit rejected -> the unshielded effect is the cause
+//   both    rejected                -> the fault is ours (wallet, providers,
+//                                      proving, or versions); do NOT file
+//   both    land                    -> no bug; Design C is open
+//
+// Compiled with 0.31.1 (language 0.23) to match the installed stable stack:
+// compact-runtime 0.16.0 / ledger-v8 8.1.0 / midnight-js 4.1.1.
+pragma language_version >= 0.23;
+import CompactStandardLibrary;
+
+export ledger deposits: Uint<64>;
+export ledger bumps: Uint<64>;
+
+constructor() {
+  deposits = 0 as Uint<64>;
+  bumps = 0 as Uint<64>;
+}
+
+// CONTROL — proving contract call, ledger write, no unshielded effect.
+export circuit bump(): [] {
+  bumps = (bumps + (1 as Uint<64>)) as Uint<64>;
+}
+
+// SUBJECT — the same shape plus exactly one unshielded line.
+export circuit deposit(color: Bytes<32>, amount: Uint<128>): [] {
+  receiveUnshielded(disclose(color), disclose(amount));
+  deposits = (deposits + (1 as Uint<64>)) as Uint<64>;
+}

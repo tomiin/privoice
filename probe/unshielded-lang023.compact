@@ -1,0 +1,23 @@
+// A copy of Midnight's #117 repro with ONE line changed: the pragma is lowered
+// from `>= 0.25.0` to `>= 0.23` so it can be offered to compiler 0.31.1, whose
+// language version is 0.23.0.
+//
+// Nothing else is altered. The question this answers is narrow and important:
+// does `receiveUnshielded` exist in language 0.23 — i.e. on the only toolchain
+// generation that currently has a STABLE SDK (compact-js 2.5.1 / runtime
+// 0.16.0 / ledger-v8 8.1.0 / midnight-js 4.1.1)?
+//
+//   compiles  -> unshielded contract ops are usable on the stable stack, and
+//                Privoice can be built without release-candidate dependencies
+//   rejected  -> the feature is newer than the stable stack, so contract
+//                custody of USDM cannot ship on stable at all today
+pragma language_version >= 0.23;
+import CompactStandardLibrary;
+
+export ledger deposits: Uint<64>;
+constructor() { deposits = 0 as Uint<64>; }
+
+export circuit deposit(color: Bytes<32>, amount: Uint<128>): [] {
+  receiveUnshielded(disclose(color), disclose(amount));
+  deposits = (deposits + (1 as Uint<64>)) as Uint<64>;
+}

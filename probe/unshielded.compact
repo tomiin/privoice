@@ -1,0 +1,15 @@
+pragma language_version >= 0.25.0;
+import CompactStandardLibrary;
+
+// Minimal contract with a single unshielded-token effect. Deploys fine, but
+// CALLING `deposit` is rejected by the node with:
+//   1010: Invalid Transaction: Custom error: 231
+//   = Malformed(FeeCalculation(OutsideTimeToDismiss))
+// even though the tx (~7 KB) is far smaller than pure-state txs that are accepted.
+export ledger deposits: Uint<64>;
+constructor() { deposits = 0 as Uint<64>; }
+
+export circuit deposit(color: Bytes<32>, amount: Uint<128>): [] {
+  receiveUnshielded(disclose(color), disclose(amount));
+  deposits = (deposits + (1 as Uint<64>)) as Uint<64>;
+}

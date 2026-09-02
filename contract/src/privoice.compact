@@ -1,0 +1,229 @@
+pragma language_version >= 0.23;
+
+import CompactStandardLibrary;
+
+// =============================================================================
+// Privoice — private invoices with public, tamper-evident settlement
+// -----------------------------------------------------------------------------
+// THE PROBLEM
+//
+// USDM arrives on Midnight in the UNSHIELDED pool and cannot be shielded. So a
+// business that settles invoices in USDM on Midnight publishes, to anyone
+// watching, every amount it charges and every counterparty it charges. For a
+// supplier bidding against three others that is not a privacy nicety; it is
+// handing competitors your price list and your customer book.
+//
+// WHAT THIS CONTRACT DOES
+//
+// The invoice itself never goes on chain. Only a commitment does:
+//
+//     commitment = persistentHash(amount, payer, memo, salt)
+//
+// The issuer sends the actual invoice to the payer off chain, exactly as they
+// would today. What the chain holds is a fingerprint of it, published at a
+// known moment, plus a record of what happened to it.
+//
+// Three things become provable without revealing anything:
+//
+//   1. The issuer cannot alter the invoice afterwards. An auditor handed the
+//      invoice document can recompute the commitment and check it against the
+//      one recorded on chain when it was issued. Tamper-evident.
+//   2. The payer can acknowledge an invoice, and doing so PROVES they are the
+//      party named in it — because only the named payer can reconstruct a
+//      commitment that matches.
+//   3. Settlement is a public fact anyone can verify, while the sum settled
+//      stays private.
+//
+// HONEST SCOPE — read this before believing anything above
+//
+//   PUBLIC:  that an invoice exists, its id, its commitment, which issuer
+//            raised it, and whether it has been acknowledged, settled or
+//            voided.
+//   PRIVATE: the amount, the payer's identity, the memo, and the salt. None of
+//            them is ever transmitted.
+//
+//   The USDM payment itself is a separate, ORDINARY unshielded transfer at the
+//   application layer. Its amount is public, because a token movement already
+//   in the clear cannot be hidden by any contract. An observer who sees a
+//   transfer of exactly X in the same window as a settlement can infer that
+//   invoice's amount. Settling in a different transaction from the payment,
+//   and letting one payment cover several invoices, blunt that. They do not
+//   eliminate it, and this contract does not pretend otherwise.
+//
+//   What is genuinely removed is the LINK: which invoice, for what, between
+//   whom. That is most of what a competitor wants.
+//
+// WHO CAN DO WHAT
+//
+// Compact has no msg.sender. A caller proves who they are by knowing a secret
+// key supplied through the `localSecretKey` witness, from which identities are
+// derived by one-way, domain-separated hashing. The key never leaves the
+// caller's machine and never reaches the chain.
+// =============================================================================
+
+// ---- The private preimage behind every commitment ---------------------------
+struct InvoiceTerms {
+  amount: Uint<64>,     // what is owed
+  payer: Bytes<32>,     // the payer's party id — private, inside the hash
+  memo: Bytes<32>,      // hash of line items, dates, terms — kept off chain
+  salt: Bytes<32>,      // makes the commitment unguessable
+}
+
+// ---- Public ledger state ----------------------------------------------------
+
+// invoice id -> commitment to its terms. The value reveals nothing.
+export ledger invoices: Map<Bytes<32>, Bytes<32>>;
+
+// invoice id -> the issuer that raised it. Stable per issuer, by design: a
+// business is not trying to hide that it issues invoices.
+export ledger issuerOf: Map<Bytes<32>, Bytes<32>>;
+
+// The payer has proved the invoice is theirs and the terms are as agreed.
+export ledger acknowledged: Set<Bytes<32>>;
+
+// The issuer has recorded payment as received.
+export ledger settled: Set<Bytes<32>>;
+
+// Withdrawn by the issuer before settlement.
+export ledger voided: Set<Bytes<32>>;
+
+// How many invoices exist. A count, not a total: no sums are public.
+export ledger invoiceCount: Uint<64>;
+
+// ---- Private witnesses — computed locally, never transmitted ----------------
+
+witness localSecretKey(): Bytes<32>;   // the caller's identity key
+witness localAmount(): Uint<64>;       // the invoice amount
+witness localPayer(): Bytes<32>;       // the payer's party id
+witness localMemo(): Bytes<32>;        // hash of the line items
+witness localSalt(): Bytes<32>;        // the commitment's salt
+
+// ---- Identity derivation ----------------------------------------------------
+//
+// Two different domain tags, so the same secret key yields two values that
+// cannot be linked to one another. Getting this wrong is how a "private"
+// contract leaks: one tag for every role means one identity for every role.
+
+// An issuer's public identity. Deliberately stable across their invoices.
+export pure circuit issuerId(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "privoice:v1:issuer"), sk]);
+}
+
+// A party's id, as shared with a counterparty the way an account number is.
+// It lives INSIDE the commitment and is never published, so it does not link
+// a payer's invoices to each other on chain.
+export pure circuit partyId(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "privoice:v1:party"), sk]);
+}
+
+// ---- The commitment ---------------------------------------------------------
+//
+// Exported and pure so a dApp, a test, or an auditor holding the invoice can
+// recompute this exact value off chain and compare it to what is stored.
+
+export pure circuit termsCommitment(
+  amount: Uint<64>,
+  payer: Bytes<32>,
+  memo: Bytes<32>,
+  salt: Bytes<32>,
+): Bytes<32> {
+  return persistentHash<InvoiceTerms>(
+    InvoiceTerms { amount: amount, payer: payer, memo: memo, salt: salt }
+  );
+}
+
+circuit callerTerms(): Bytes<32> {
+  return termsCommitment(localAmount(), localPayer(), localMemo(), localSalt());
+}
+
+// ---- Guards -----------------------------------------------------------------
+
+circuit assertIssuerOf(id: Bytes<32>): [] {
+  assert(invoices.member(disclose(id)), "Privoice: no such invoice");
+  assert(issuerOf.lookup(disclose(id)) == issuerId(localSecretKey()),
+    "Privoice: caller did not issue this invoice");
+}
+
+circuit assertOpen(id: Bytes<32>): [] {
+  assert(!settled.member(disclose(id)), "Privoice: already settled");
+  assert(!voided.member(disclose(id)), "Privoice: invoice was voided");
+}
+
+// ---- Reads ------------------------------------------------------------------
+
+export circuit exists(id: Bytes<32>): Boolean {
+  return invoices.member(disclose(id));
+}
+
+export circuit isSettled(id: Bytes<32>): Boolean {
+  return settled.member(disclose(id));
+}
+
+export circuit commitmentOf(id: Bytes<32>): Bytes<32> {
+  assert(invoices.member(disclose(id)), "Privoice: no such invoice");
+  return invoices.lookup(disclose(id));
+}
+
+// ---- Issue ------------------------------------------------------------------
+//
+// The id is public and chosen by the issuer — it is the invoice number, and it
+// is what the payer quotes. Everything that matters about the invoice arrives
+// through witnesses and leaves only as a hash.
+
+export circuit issue(id: Bytes<32>): [] {
+  assert(!invoices.member(disclose(id)), "Privoice: invoice id already used");
+
+  const commitment = callerTerms();
+  invoices.insert(disclose(id), disclose(commitment));
+  issuerOf.insert(disclose(id), disclose(issuerId(localSecretKey())));
+  invoiceCount = (invoiceCount + 1) as Uint<64>;
+}
+
+// ---- Acknowledge ------------------------------------------------------------
+//
+// The payer re-supplies the terms they were sent. The contract recomputes the
+// commitment and requires a match, which proves two things at once: the payer
+// has the genuine invoice, and they are the party named in it — because the
+// payer id is inside the hash and they derived it from their own secret key.
+//
+// Nothing about the payer is written to the chain. Only the invoice id moves
+// into `acknowledged`.
+
+export circuit acknowledge(id: Bytes<32>): [] {
+  assert(invoices.member(disclose(id)), "Privoice: no such invoice");
+  assertOpen(id);
+  assert(!acknowledged.member(disclose(id)), "Privoice: already acknowledged");
+
+  assert(localPayer() == partyId(localSecretKey()),
+    "Privoice: caller is not the payer named in this invoice");
+  assert(callerTerms() == invoices.lookup(disclose(id)),
+    "Privoice: terms do not match the invoice on record");
+
+  acknowledged.insert(disclose(id));
+}
+
+// ---- Settle -----------------------------------------------------------------
+//
+// The issuer records that payment arrived. The issuer must still prove they
+// hold the original terms, so a settled invoice cannot be quietly swapped for
+// different ones after the fact.
+//
+// The USDM transfer itself happens at the application layer — see the honest
+// scope note at the top of this file.
+
+export circuit settle(id: Bytes<32>): [] {
+  assertIssuerOf(id);
+  assertOpen(id);
+  assert(callerTerms() == invoices.lookup(disclose(id)),
+    "Privoice: terms do not match the invoice on record");
+
+  settled.insert(disclose(id));
+}
+
+// ---- Void -------------------------------------------------------------------
+
+export circuit voidInvoice(id: Bytes<32>): [] {
+  assertIssuerOf(id);
+  assertOpen(id);
+  voided.insert(disclose(id));
+}

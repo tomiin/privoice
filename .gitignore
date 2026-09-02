@@ -1,0 +1,15 @@
+node_modules/
+managed/
+dist/
+
+# Wallet state — never commit. wallet-checkpoint.json and the level db hold
+# synced wallet material for a funded Preview wallet.
+wallet-checkpoint.json
+*.stale.json
+midnight-level-db/
+.env
+.env.*
+
+.DS_Store
+*.bak
+*.orig
