@@ -35,6 +35,30 @@ import { submitWithRetry } from "./submit.js";
 export const USDM_TOKEN_COLOR =
   "003bacd9a361ba0d425e408776020e40271375e8b8de42d73eec046a44947d73";
 
+/** NIGHT, Midnight's native token, is the all-zero colour. */
+export const NIGHT_TOKEN_COLOR = "00".repeat(32);
+
+/**
+ * The token the settlement leg actually moves.
+ *
+ * USDM is the payment asset this project is built around, and its colour above
+ * is the constant the code uses. `PRIVOICE_TOKEN_COLOR` exists only so the
+ * settlement can be demonstrated on chain when no USDM is obtainable — USDM is
+ * minted on Midnight solely by VIA's cross-chain gateway, so when that bridge
+ * is not delivering there is no other way to acquire it on Preview.
+ *
+ * The transfer code is identical either way. Only this 32-byte value differs.
+ */
+export const SETTLEMENT_TOKEN_COLOR =
+  process.env.PRIVOICE_TOKEN_COLOR ?? USDM_TOKEN_COLOR;
+
+export const settlementTokenName = (): string => {
+  const c = norm(SETTLEMENT_TOKEN_COLOR);
+  if (c === norm(USDM_TOKEN_COLOR)) return "USDM";
+  if (c === norm(NIGHT_TOKEN_COLOR)) return "NIGHT";
+  return "token " + c.slice(0, 12) + "…";
+};
+
 /** USDM carries 6 decimal places on every chain it exists on. */
 export const USDM_DECIMALS = 6;
 
@@ -48,6 +72,23 @@ export function formatUsdm(raw: bigint): string {
 }
 
 /** USDM held by this wallet, in base units. Zero if the colour is absent. */
+export function settlementDecimals(): number {
+  return norm(SETTLEMENT_TOKEN_COLOR) === norm(NIGHT_TOKEN_COLOR) ? 6 : USDM_DECIMALS;
+}
+
+/** Balance of the token the settlement leg will move. */
+export function settlementBalance(state: any): bigint {
+  return balanceOfColour(state, SETTLEMENT_TOKEN_COLOR);
+}
+
+export function balanceOfColour(state: any, colour: string): bigint {
+  const raw = state?.unshielded?.balances;
+  const entries: [string, any][] =
+    raw instanceof Map ? [...raw.entries()] : Object.entries(raw ?? {});
+  const hit = entries.find(([c]) => norm(String(c)) === norm(colour));
+  return hit ? BigInt(hit[1]) : 0n;
+}
+
 export function usdmBalance(state: any): bigint {
   const raw = state?.unshielded?.balances;
   const entries: [string, any][] =
@@ -85,11 +126,11 @@ export async function payUsdm(
   const { facade, keystore, zswapSecretKeys, dustSecretKey } = bundle;
 
   const state: any = await Rx.firstValueFrom(facade.state());
-  const held = usdmBalance(state);
+  const held = settlementBalance(state);
   if (held < amount) {
     throw new Error(
-      `Not enough USDM: holding ${formatUsdm(held)}, need ${formatUsdm(amount)}.\n` +
-      `Bridge USDM to this Preview wallet before settling.`,
+      `Not enough ${settlementTokenName()}: holding ${formatUsdm(held)}, ` +
+      `need ${formatUsdm(amount)}.`,
     );
   }
 
@@ -98,7 +139,7 @@ export async function payUsdm(
   const recipe = await facade.transferTransaction(
     [{
       type: "unshielded",
-      outputs: [{ amount, type: USDM_TOKEN_COLOR, receiverAddress: recipient }],
+      outputs: [{ amount, type: SETTLEMENT_TOKEN_COLOR, receiverAddress: recipient }],
     }],
     { shieldedSecretKeys: zswapSecretKeys, dustSecretKey },
     { ttl, payFees: true },

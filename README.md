@@ -9,10 +9,18 @@ Live on Midnight **Preview**:
 
 | | |
 | --- | --- |
-| Contract | `f80694b6c5cb9bab0cd1246e1cb20fa816e0d4d92234d6017dc90a1fd0ac8494` |
-| Proved on chain | `issue` → `acknowledge` → `settle`, all accepted |
-| USDM payment leg | implemented in [`app/src/usdm.ts`](app/src/usdm.ts); the run above predates it |
+| **Contract** | `6c2936b6b77fbd92dbc8fb38071eca080b23f4f72c6cac024136fe1f188f3fe7` |
+| Proved on chain | `issue` → `acknowledge` → **pay** → `settle`, all four accepted |
+| Invoice in that run | `e024cb6a6ecf41808d479b2f8c88ab81a8d7d267756fe219cc3ce60ef85b6af4` |
+| Commitment | `e796f1f035cdb2009b764027c6dd0204a2860ba272518e23efc5fb3de7dd3ef7` |
+| Settlement transfer | `00b8593136d3046de72c042b9aea5498613016cebf090ee9593fd40ca2f2139248` |
 | Toolchain | compiler 0.31.1 · language 0.23 · runtime 0.16.0 · ledger-v8 8.1.0 · midnight-js 4.1.1 |
+
+> **The settlement transfer in that run moved NIGHT, not USDM.** USDM is the
+> payment asset this project is built around and is the code's default, but it
+> could not be obtained on Preview on the day — see
+> [USDM: handled by the application layer](#usdm-handled-by-the-application-layer)
+> for exactly why, and what is and isn't demonstrated.
 
 ---
 
@@ -105,7 +113,7 @@ The architecture reflects a measured constraint, not a guess.
 
 **USDM is handled at the application layer, not by the contract.**
 
-The payment code is [`app/src/usdm.ts`](app/src/usdm.ts), and it is called from
+The payment code is [`app/src/usdm.ts`](app/src/usdm.ts), called from
 [`app/src/deploy.ts`](app/src/deploy.ts) as step 3 of 4, between `acknowledge`
 and `settle`.
 
@@ -122,10 +130,46 @@ design.
 
 Unshielded inputs each require a signature, which is why the transfer is signed
 with `keystore.signData` via `facade.signRecipe` before finalising. Omitting
-that step is one way to reach `Custom(192) InputsSignaturesLengthMismatch`.
+that is one way to reach `Custom(192) InputsSignaturesLengthMismatch`.
 
 The contract records **that** settlement happened. It never sees the amount and
 never takes custody of the token — because, as measured above, it cannot.
+
+### What the deployed run actually moved, and why
+
+The settlement in the deployed run above moved **0.125 NIGHT**, not USDM.
+Being precise about that:
+
+| | |
+| --- | --- |
+| Demonstrated on chain | the application-layer settlement mechanism — a real unshielded token transfer, wallet to wallet, inside the invoice lifecycle |
+| Token moved in that run | NIGHT (`00…00`) |
+| Token the code defaults to | USDM (`003bacd9…947d73`) |
+| Difference between the two | one 32-byte constant. The transfer code is the same function, same call, same signing path. |
+
+**Why the substitution was necessary.** USDM is minted on Midnight *solely* by
+VIA's cross-chain gateway delivering a message from Cardano. There is no faucet
+and no other issuance path, so when that gateway is not delivering, USDM cannot
+be acquired on Preview at all. On 2 September 2026 it was not delivering:
+
+| Message | Sent with | Amount | Status |
+| --- | --- | --- | --- |
+| [`…000406`](https://scan.vialabs.tech/tx/d1edfca0edbdb2a7e437e788b8e81d869080960cbeb21db0ed5b423314bc9ccc) | this project's own bridge UI | 10 USDM | stuck at *Awaiting Attestation* |
+| [`…000408`](https://scan.vialabs.tech/tx/2834fa408b1ceb5025d0e8889498d60374fdf7964486b18bccfc6f226b74c263) | VIA's own CLI, `@via-labs-tech/usdm-bridge@1.2.0` | 1 USDM | stuck at *Awaiting Attestation* |
+
+Both locks confirmed on Cardano. Both carry routing values matching VIA's
+published testnet table — chain ids `2273266 → 64364450`, gateway
+`471dfe55…e73e485c`, token colour `003bacd9…947d73`. VIA's documentation states
+that validators attest after **1 block on testnet**; Cardano Preprod was
+healthy throughout and the first transfer was ~300 blocks deep. On VIA's own
+message feed, the last delivered message on that route was `…000405`, roughly
+24 hours earlier — these two are the only ones since.
+
+**To reproduce with USDM**, hold USDM on Preview and run the deploy with no
+token override. `PRIVOICE_TOKEN_COLOR` is unset by default and the code uses
+USDM's colour; the NIGHT run above was produced by passing that variable
+explicitly, and the run prints a warning when it is set to anything other than
+USDM.
 
 ## How identity works
 
@@ -177,7 +221,8 @@ the tamper-evidence check independently verifiable.
 
 - **USDM on Preview** for the payment step. Without it the contract lifecycle
   still runs end to end and the script says clearly that the payment leg was
-  skipped.
+  skipped. USDM can only reach Preview through VIA's cross-chain gateway —
+  there is no faucet.
 
 ### Point it at your wallet
 
@@ -215,7 +260,8 @@ whether USDM is present, and shows the Bech32m address to send USDM to.
 
 1. **issue** as the issuer — publishes only a commitment
 2. **acknowledge** as the payer — proves the invoice names them
-3. **pay** — a real USDM transfer, wallet to wallet
+3. **pay** — a real unshielded token transfer, wallet to wallet (USDM by
+   default; see the note on the deployed run above)
 4. **settle** as the issuer — records that payment arrived
 
 Useful switches:
@@ -223,6 +269,7 @@ Useful switches:
 | variable | effect |
 | --- | --- |
 | `PRIVOICE_PAYEE` | Bech32m address to pay; defaults to a self-transfer |
+| `PRIVOICE_TOKEN_COLOR` | token colour the settlement moves. **Unset = USDM.** Only set this to demonstrate the settlement when USDM cannot be obtained; the run prints a warning when it is not USDM |
 | `PRIVOICE_AMOUNT` | invoice amount in base units (default `125000` = 0.125 USDM) |
 | `FRESH_SYNC=1` | ignore the wallet checkpoint and cold-sync from scratch |
 | `CHECKPOINT_MAX_HOURS` | how stale a checkpoint may be before it is refused (default 12) |

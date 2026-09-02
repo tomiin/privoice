@@ -29,8 +29,8 @@ import { saveCheckpoint, loadCheckpoint, checkpointPath } from "./checkpoint.js"
 import { createProviders, ZK_CONFIG_PATH } from "./providers.js";
 import { witnesses, type PrivoicePrivateState } from "./witnesses.js";
 import {
-  payUsdm, usdmBalance, formatUsdm, addressString, parseUnshieldedAddress,
-  USDM_TOKEN_COLOR, type UsdmPayment,
+  payUsdm, settlementBalance, formatUsdm, addressString, parseUnshieldedAddress,
+  SETTLEMENT_TOKEN_COLOR, settlementTokenName, USDM_TOKEN_COLOR, type UsdmPayment,
 } from "./usdm.js";
 
 import * as ContractModule from "../managed/contract/index.js";
@@ -272,25 +272,31 @@ async function main() {
   console.log("     with Custom(192) — see probe/ and SERVICEDESK-192.md.\n");
 
   const payState: any = await Rx.firstValueFrom(bundle.facade.state());
-  const held = usdmBalance(payState);
+  const held = settlementBalance(payState);
+  const tokenName = settlementTokenName();
   const payeeEnv = process.env.PRIVOICE_PAYEE;
   const recipient: any = payeeEnv
     ? parseUnshieldedAddress(payeeEnv)
     : payState?.unshielded?.address;
 
-  console.log("     token colour :", USDM_TOKEN_COLOR);
-  console.log("     wallet holds :", formatUsdm(held), "USDM");
-  console.log("     paying       :", formatUsdm(amount), "USDM");
+  console.log("     token        :", tokenName);
+  console.log("     token colour :", SETTLEMENT_TOKEN_COLOR);
+  if (tokenName !== "USDM") {
+    console.log("     ⚠ NOT USDM — USDM's colour is", USDM_TOKEN_COLOR);
+    console.log("       (set PRIVOICE_TOKEN_COLOR to change; unset = USDM)");
+  }
+  console.log("     wallet holds :", formatUsdm(held), tokenName);
+  console.log("     paying       :", formatUsdm(amount), tokenName);
   console.log("     to           :", addressString(recipient));
   if (!payeeEnv) console.log("     (self-transfer; set PRIVOICE_PAYEE to pay another address)");
 
   let payment: UsdmPayment | null = null;
   if (held >= amount) {
     payment = await withRetries("usdm payment", () => payUsdm(bundle, recipient, amount));
-    console.log("     ✅ USDM sent, tx", payment.txId, "\n");
+    console.log(`     ✅ ${tokenName} sent, tx`, payment.txId, "\n");
   } else {
     console.log(
-      "\n     ⚠️  SKIPPED — this wallet holds no USDM on Preview.\n" +
+      `\n     ⚠️  SKIPPED — this wallet holds no ${tokenName} on Preview.\n` +
       "     The contract lifecycle still completes below, but the payment leg\n" +
       "     did not happen, so this run does NOT demonstrate USDM as the\n" +
       "     payment asset. Bridge USDM to this wallet and run again.\n",
@@ -307,7 +313,17 @@ async function main() {
   console.log("contract     : ", address);
   console.log("invoice id   : ", hex(invoiceId));
   console.log("commitment   : ", hex(expectedCommitment));
-  console.log("USDM payment : ", payment ? `${formatUsdm(payment.amount)} USDM, tx ${payment.txId}` : "NOT MADE (no USDM in wallet)");
+  console.log("settlement   : ", payment
+    ? `${formatUsdm(payment.amount)} ${tokenName}, tx ${payment.txId}`
+    : `NOT MADE (no ${tokenName} in wallet)`);
+  if (payment && tokenName !== "USDM") {
+    console.log();
+    console.log("NOTE: the settlement above moved " + tokenName + ", not USDM.");
+    console.log("USDM is minted on Midnight only by VIA's cross-chain gateway,");
+    console.log("which was not delivering on Preview when this was run. The");
+    console.log("transfer code is identical for USDM — only the token colour");
+    console.log("differs. See the README.");
+  }
   console.log();
   console.log("On chain      : the id, the commitment, the issuer id, and the");
   console.log("                fact that it was acknowledged and settled.");
