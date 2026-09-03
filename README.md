@@ -2,8 +2,9 @@
 
 **Private invoices with public, tamper-evident settlement — on Midnight, in USDM.**
 
-Privoice is **built on [Midnight](https://midnight.network)**, using the Compact
-language and Midnight's zero-knowledge contract model.
+This project is built on the Midnight Network.
+
+Privoice is written in Compact and uses Midnight's zero-knowledge contract model.
 
 Live on Midnight **Preview**:
 
