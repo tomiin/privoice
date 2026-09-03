@@ -10,18 +10,17 @@ Live on Midnight **Preview**:
 
 | | |
 | --- | --- |
-| **Contract** | `6c2936b6b77fbd92dbc8fb38071eca080b23f4f72c6cac024136fe1f188f3fe7` |
+| **Contract** | `ab02b86dd7008f2f2aa798514205acbeb1c5b2da791d38dfc91d81f8fd5c286a` |
 | Proved on chain | `issue` → `acknowledge` → **pay** → `settle`, all four accepted |
-| Invoice in that run | `e024cb6a6ecf41808d479b2f8c88ab81a8d7d267756fe219cc3ce60ef85b6af4` |
-| Commitment | `e796f1f035cdb2009b764027c6dd0204a2860ba272518e23efc5fb3de7dd3ef7` |
-| Settlement transfer | `00b8593136d3046de72c042b9aea5498613016cebf090ee9593fd40ca2f2139248` |
+| Invoice in that run | `0565a05ef07eb92b7659bd7978f346e3b2c2f67b3e3e6942ece92cfef3b80197` |
+| Commitment | `ad6164509682f9330cb7a216f827fda3487058eceee42f161f3c5b1f2d1b18b7` |
+| Settlement | **0.125 USDM**, tx `00a4f6c54a8df9d38e8dc13458f5316c064f68e3a71b914040012800303f81e2d9` |
 | Toolchain | compiler 0.31.1 · language 0.23 · runtime 0.16.0 · ledger-v8 8.1.0 · midnight-js 4.1.1 |
 
-> **The settlement transfer in that run moved NIGHT, not USDM.** USDM is the
-> payment asset this project is built around and is the code's default, but it
-> could not be obtained on Preview on the day — see
-> [USDM: handled by the application layer](#usdm-handled-by-the-application-layer)
-> for exactly why, and what is and isn't demonstrated.
+The settlement above moved **real USDM between two addresses** — not a
+self-transfer and not a stand-in token.
+
+![Privoice lifecycle on Preview](docs/screenshots/lifecycle-usdm.png)
 
 ---
 
@@ -136,41 +135,18 @@ that is one way to reach `Custom(192) InputsSignaturesLengthMismatch`.
 The contract records **that** settlement happened. It never sees the amount and
 never takes custody of the token — because, as measured above, it cannot.
 
-### What the deployed run actually moved, and why
+### Getting USDM onto Preview
 
-The settlement in the deployed run above moved **0.125 NIGHT**, not USDM.
-Being precise about that:
+Worth knowing before you try to run this: **USDM is minted on Midnight solely
+by VIA's cross-chain gateway** delivering a message from Cardano. There is no
+faucet and no other issuance path, so the only way to hold USDM on Preview is
+to bridge it.
 
-| | |
-| --- | --- |
-| Demonstrated on chain | the application-layer settlement mechanism — a real unshielded token transfer, wallet to wallet, inside the invoice lifecycle |
-| Token moved in that run | NIGHT (`00…00`) |
-| Token the code defaults to | USDM (`003bacd9…947d73`) |
-| Difference between the two | one 32-byte constant. The transfer code is the same function, same call, same signing path. |
-
-**Why the substitution was necessary.** USDM is minted on Midnight *solely* by
-VIA's cross-chain gateway delivering a message from Cardano. There is no faucet
-and no other issuance path, so when that gateway is not delivering, USDM cannot
-be acquired on Preview at all. On 2 September 2026 it was not delivering:
-
-| Message | Sent with | Amount | Status |
-| --- | --- | --- | --- |
-| [`…000406`](https://scan.vialabs.tech/tx/d1edfca0edbdb2a7e437e788b8e81d869080960cbeb21db0ed5b423314bc9ccc) | this project's own bridge UI | 10 USDM | stuck at *Awaiting Attestation* |
-| [`…000408`](https://scan.vialabs.tech/tx/2834fa408b1ceb5025d0e8889498d60374fdf7964486b18bccfc6f226b74c263) | VIA's own CLI, `@via-labs-tech/usdm-bridge@1.2.0` | 1 USDM | stuck at *Awaiting Attestation* |
-
-Both locks confirmed on Cardano. Both carry routing values matching VIA's
-published testnet table — chain ids `2273266 → 64364450`, gateway
-`471dfe55…e73e485c`, token colour `003bacd9…947d73`. VIA's documentation states
-that validators attest after **1 block on testnet**; Cardano Preprod was
-healthy throughout and the first transfer was ~300 blocks deep. On VIA's own
-message feed, the last delivered message on that route was `…000405`, roughly
-24 hours earlier — these two are the only ones since.
-
-**To reproduce with USDM**, hold USDM on Preview and run the deploy with no
-token override. `PRIVOICE_TOKEN_COLOR` is unset by default and the code uses
-USDM's colour; the NIGHT run above was produced by passing that variable
-explicitly, and the run prints a warning when it is set to anything other than
-USDM.
+Budget time for it. VIA's documentation says validators attest after **1 block
+on testnet**, and a transfer of mine on 29 August delivered in **1 minute 52
+seconds**. Two transfers on 2 September took **16h 32m** and **15h 4m** — same
+route, same client, same wallet. Delivery time on Preprod → Preview is not
+something to plan around.
 
 ## How identity works
 
@@ -261,8 +237,7 @@ whether USDM is present, and shows the Bech32m address to send USDM to.
 
 1. **issue** as the issuer — publishes only a commitment
 2. **acknowledge** as the payer — proves the invoice names them
-3. **pay** — a real unshielded token transfer, wallet to wallet (USDM by
-   default; see the note on the deployed run above)
+3. **pay** — a real USDM transfer, wallet to wallet
 4. **settle** as the issuer — records that payment arrived
 
 Useful switches:
@@ -270,7 +245,7 @@ Useful switches:
 | variable | effect |
 | --- | --- |
 | `PRIVOICE_PAYEE` | Bech32m address to pay; defaults to a self-transfer |
-| `PRIVOICE_TOKEN_COLOR` | token colour the settlement moves. **Unset = USDM.** Only set this to demonstrate the settlement when USDM cannot be obtained; the run prints a warning when it is not USDM |
+| `PRIVOICE_TOKEN_COLOR` | token colour the settlement moves. **Unset = USDM**, which is the intended asset. Set it only to exercise the settlement path with another unshielded token; the run prints a warning when it is not USDM |
 | `PRIVOICE_AMOUNT` | invoice amount in base units (default `125000` = 0.125 USDM) |
 | `FRESH_SYNC=1` | ignore the wallet checkpoint and cold-sync from scratch |
 | `CHECKPOINT_MAX_HOURS` | how stale a checkpoint may be before it is refused (default 12) |
