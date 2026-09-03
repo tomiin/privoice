@@ -140,6 +140,45 @@ Skip `signRecipe` and the transaction reaches the node with fewer signatures tha
 
 ---
 
+## 6. When the gateway stops, there is no other way to get USDM
+
+USDM is minted on Midnight **solely** by VIA's cross-chain gateway delivering a
+message from Cardano. No faucet, no other issuance path. Which means if that
+gateway stops delivering, you cannot get USDM on Preview at all — and I found
+that out with a submission deadline in front of me.
+
+On 2 September I sent 10 USDM from my own bridge UI at 12:15 MDT. Nothing
+arrived. An hour later I sent 1 USDM using **VIA's own CLI** as a control, to
+rule out my code. Both sat at *Awaiting Attestation*.
+
+The evidence said it was not me:
+
+- Both messages carried routing values matching VIA's published testnet table — chain ids `2273266 → 64364450`, gateway `471dfe55…e73e485c`, token colour `003bacd9…947d73`
+- Both `destinationRecipient` fields decoded to my own address
+- Cardano Preprod was healthy — the tip was ~260 blocks past my lock
+- The docs say testnet attests after **1 block**, and my 29 August transfer on the same route delivered in **1m 52s**
+- On VIA's global message feed, the last delivered message on that route was ~24 hours old. Mine were the only two since.
+
+Two independent clients, two package versions, ninety minutes apart, identical
+failure. That is about as clean a "not my code" result as you get.
+
+So I shipped anyway, and documented it. The payment leg is a parameter — one
+32-byte token colour — so I ran the settlement with NIGHT instead, and the
+README said exactly that: which token moved, which token the code defaults to,
+why the substitution was necessary, and both stuck message ids so a reviewer
+could check the claim themselves in thirty seconds.
+
+The next morning both messages delivered — **16h 32m** and **15h 4m**. VIA's
+scanner still labels those "normal". I re-ran the lifecycle with real USDM,
+paying a second address rather than my own, and removed the substitution note
+from the README, because it had stopped being true.
+
+Two things I would take from that. **Delivery time on Preprod → Preview is not
+something to plan around** — the documented rule is one block and I saw sixteen
+hours. And when you are blocked by someone else's infrastructure, the move is
+to make the blocker verifiable rather than quietly omit it. Naming it cost
+nothing and would have survived review either way.
+
 ## Two smaller ones, for whoever hits them next
 
 **DUST is not automatic.** Holding NIGHT does not generate DUST. It must be **registered**. My wallet and my probe both read zero until I registered, and nothing tells you that is why.
