@@ -286,6 +286,6 @@ SERVICEDESK-192.md              the 192 finding, written up
 BUILD-PLAN.md                   design notes, written before the code
 ```
 
-## Licence
+## License
 
 Apache-2.0. See [LICENSE](LICENSE).
