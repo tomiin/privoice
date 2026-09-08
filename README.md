@@ -288,4 +288,4 @@ BUILD-PLAN.md                   design notes, written before the code
 
 ## Licence
 
-MIT.
+Apache-2.0. See [LICENSE](LICENSE).
